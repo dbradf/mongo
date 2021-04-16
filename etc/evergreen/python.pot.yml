@@ -1,0 +1,53 @@
+name: python
+functions:
+  set up venv:
+    description: Setup a virtual environment with python dependencies installed
+    actions:
+      - command: shell.exec
+        params:
+          shell: bash
+          script: |
+            # exit immediately if virtualenv is not found
+            set -o errexit
+
+            python_loc=$(which ${python|/opt/mongodbtoolchain/v3/bin/python3})
+            venv_dir="${workdir}/venv"
+            "$python_loc" -m venv --system-site-packages "$venv_dir"
+
+            # venv creates its Scripts/activate file with CLRF endings, which
+            # cygwin bash does not like. dos2unix it
+            # (See https://bugs.python.org/issue32451)
+            if [ "Windows_NT" = "$OS" ]; then
+              dos2unix "${workdir}/venv/Scripts/activate"
+            fi
+
+            export VIRTUAL_ENV_DISABLE_PROMPT=yes
+
+            # Not all git get project calls clone into ${workdir}/src so we allow
+            # callers to tell us where the pip requirements files are.
+            pip_dir="${pip_dir}"
+            if [[ -z $pip_dir ]]; then
+              # Default to most common location
+              pip_dir="${workdir}/src/etc/pip"
+            fi
+
+            # Same as above we have to use quotes to preserve the
+            # Windows path separator
+            toolchain_txt="$pip_dir/toolchain-requirements.txt"
+            ${activate_virtualenv}
+            echo "Upgrading pip to 21.0.1"
+            python -m pip install "pip==21.0.1"
+            python -m pip install -r "$toolchain_txt" -q
+            python -m pip freeze > pip-requirements.txt
+
+      - command: s3.put
+        params:
+          aws_key: ${aws_key}
+          aws_secret: ${aws_secret}
+          local_file: pip-requirements.txt
+          remote_file: ${project}/${build_variant}/${revision}/pip-requirements-${task_id}-${execution}.txt
+          bucket: mciuploads
+          permissions: public-read
+          content_type: atext-plain
+          display_name: Pip Requirements
+
